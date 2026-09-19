@@ -1,4 +1,4 @@
-module cascade-cli
+module cascade
 
 go 1.26.8
 
