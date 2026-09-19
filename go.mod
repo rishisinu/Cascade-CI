@@ -1,4 +1,4 @@
-module cascade
+module github.com/rishisinu/Cascade-CI
 
 go 1.26.8
 
