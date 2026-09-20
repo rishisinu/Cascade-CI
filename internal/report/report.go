@@ -28,6 +28,7 @@ type Finding struct {
 	SourceTool SourceTool `json:"source_tool"`
 	Severity   Severity   `json:"severity"`
 	Category   string     `json:"category"`
+	rawMessage any        `json:"raw_message"`
 }
 
 type RunStatus string
