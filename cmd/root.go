@@ -10,6 +10,15 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// tier0Options holds the values parsed from the `tier0 run` flags.
+type tier0Options struct {
+	repoPath   string
+	baseRef    string
+	binaryPath string
+}
+
+var tier0Opts tier0Options
+
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
 	Use:   "cascade",
@@ -48,7 +57,11 @@ func init() {
 
 	// Cobra also supports local flags, which will only run
 	// when this action is called directly.
-	rootCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
-	tier0Cmd.AddCommand(tier0RunCmd)
 	rootCmd.AddCommand(tier0Cmd)
+
+	tier0Cmd.AddCommand(tier0RunCmd)
+
+	tier0RunCmd.Flags().StringVar(&tier0Opts.repoPath, "repo", ".", "path to the repository to scan")
+	tier0RunCmd.Flags().StringVar(&tier0Opts.baseRef, "base", "origin/main", "git ref to diff against, scoping the scan to the PR")
+	tier0RunCmd.Flags().StringVar(&tier0Opts.binaryPath, "binary", "", "path to the ELF binary built from this PR")
 }
