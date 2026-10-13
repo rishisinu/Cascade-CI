@@ -1,0 +1,4 @@
+:include .gitignore
+
+# Rule test fixtures are deliberately vulnerable.
+testdata/

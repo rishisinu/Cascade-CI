@@ -1,0 +1,65 @@
+rules:
+  - id: dockerfile-user-root
+    languages: [dockerfile]
+    severity: MEDIUM
+    message: >-
+      The image ends up running as root. A container escape or a compromised process
+      then has root inside the container. Switch to an unprivileged USER after the steps
+      that need root.
+    metadata:
+      category: security
+      cwe: "CWE-250: Execution with Unnecessary Privileges"
+      confidence: MEDIUM
+    # A root USER line with no later USER line anywhere after it.
+    pattern-regex: (?im)^[ \t]*USER[ \t]+(root|0)(:\S+)?[ \t]*$(?![\s\S]*^[ \t]*USER[ \t]+\S)
+
+  - id: dockerfile-curl-pipe-shell
+    languages: [dockerfile]
+    severity: HIGH
+    message: >-
+      A remote script is piped straight into a shell, so whoever controls that URL (or
+      the network path) controls your build. Download it, verify a pinned checksum, then
+      run it.
+    metadata:
+      category: security
+      cwe: "CWE-494: Download of Code Without Integrity Check"
+      confidence: HIGH
+    pattern-regex: \b(curl|wget)\b[^|\n]*\|\s*(sudo\s+(-\S+\s+)*)?(ba|z|da)?sh\b
+
+  - id: dockerfile-latest-tag
+    languages: [dockerfile]
+    severity: LOW
+    message: >-
+      `:latest` changes without warning, so builds aren't reproducible and a compromised
+      upstream push lands automatically. Pin a version tag, ideally with an @sha256
+      digest.
+    metadata:
+      category: supply-chain
+      cwe: "CWE-1357: Reliance on Insufficiently Trustworthy Component"
+      confidence: HIGH
+    pattern-regex: (?im)^\s*FROM\s+(--platform=\S+\s+)?\S+:latest\b
+
+  - id: dockerfile-secret-in-env-arg
+    languages: [dockerfile]
+    severity: HIGH
+    message: >-
+      ENV and ARG values are stored in the image metadata (`docker history`), so a
+      secret here leaks to anyone who can pull the image. Use a BuildKit secret mount:
+      RUN --mount=type=secret,id=...
+    metadata:
+      category: security
+      cwe: "CWE-538: Insertion of Sensitive Information into Externally-Accessible File"
+      confidence: MEDIUM
+    pattern-regex: (?im)^\s*(ENV|ARG)\s+\w*(PASSWORD|PASSWD|SECRET|TOKEN|API_KEY|APIKEY|PRIVATE_KEY|ACCESS_KEY)\w*
+
+  - id: dockerfile-add-remote-url
+    languages: [dockerfile]
+    severity: MEDIUM
+    message: >-
+      ADD fetches this URL at build time without verifying it. Add --checksum=sha256:...
+      or download and verify the file in a RUN step.
+    metadata:
+      category: supply-chain
+      cwe: "CWE-494: Download of Code Without Integrity Check"
+      confidence: HIGH
+    pattern-regex: (?im)^\s*ADD\s+(?![^\n]*--checksum)(--\S+\s+)*https?://

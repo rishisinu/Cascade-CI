@@ -1,0 +1,255 @@
+rules:
+  - id: go-shell-command-injection
+    languages: [go]
+    severity: CRITICAL
+    message: >-
+      A non-constant string is passed to a shell with `-c`. If any part of it comes from
+      user input, an attacker can run arbitrary commands. Call the binary directly with
+      exec.Command(name, args...) so arguments never go through a shell.
+    metadata:
+      category: security
+      cwe: "CWE-78: OS Command Injection"
+      confidence: MEDIUM
+    patterns:
+      - pattern-either:
+          - pattern: exec.Command($SH, $FLAG, $CMD, ...)
+          - pattern: exec.CommandContext($CTX, $SH, $FLAG, $CMD, ...)
+      - metavariable-regex:
+          metavariable: $SH
+          regex: ^"(/usr/bin/|/bin/)?(sh|bash|zsh|dash|cmd|cmd\.exe|powershell|pwsh)"$
+      - metavariable-regex:
+          metavariable: $FLAG
+          regex: ^"(-c|/c|/C|-Command)"$
+      - metavariable-regex:
+          metavariable: $CMD
+          regex: ^(?!"[^"]*"$|`[^`]*`$)
+
+  - id: go-request-input-to-command
+    mode: taint
+    languages: [go]
+    severity: CRITICAL
+    message: >-
+      HTTP request input reaches exec.Command. Even without a shell, an attacker can pick
+      the binary or inject flags (e.g. `--output=/etc/...`). Map the input onto a fixed
+      allowlist of values instead of passing it through.
+    metadata:
+      category: security
+      cwe: "CWE-78: OS Command Injection"
+      confidence: HIGH
+    pattern-sources:
+      - pattern: $R.URL.Query()
+      - pattern: $R.FormValue(...)
+      - pattern: $R.PostFormValue(...)
+      - pattern: $R.PathValue(...)
+      - pattern: $R.Header.Get(...)
+      - pattern: mux.Vars(...)
+    pattern-sinks:
+      - pattern: exec.Command(...)
+      - pattern: exec.CommandContext(...)
+
+  - id: go-request-input-to-file-path
+    mode: taint
+    languages: [go]
+    severity: HIGH
+    message: >-
+      HTTP request input is used as a file path. `../` sequences let an attacker read or
+      write files outside the intended directory. Use filepath.Base, check
+      filepath.IsLocal, or use os.Root (Go 1.24+) to confine access.
+    metadata:
+      category: security
+      cwe: "CWE-22: Path Traversal"
+      confidence: MEDIUM
+    pattern-sources:
+      - pattern: $R.URL.Query()
+      - pattern: $R.FormValue(...)
+      - pattern: $R.PostFormValue(...)
+      - pattern: $R.PathValue(...)
+      - pattern: mux.Vars(...)
+    pattern-sanitizers:
+      - pattern: filepath.Base(...)
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: os.Open($P)
+              - pattern: os.OpenFile($P, ...)
+              - pattern: os.ReadFile($P)
+              - pattern: os.WriteFile($P, ...)
+              - pattern: os.Create($P)
+              - pattern: os.Remove($P)
+              - pattern: os.RemoveAll($P)
+              - pattern: http.ServeFile($W, $REQ, $P)
+          - focus-metavariable: $P
+
+  - id: go-request-input-to-ssrf
+    mode: taint
+    languages: [go]
+    severity: HIGH
+    message: >-
+      HTTP request input controls the URL of an outbound request (SSRF). An attacker can
+      reach internal services or cloud metadata endpoints such as 169.254.169.254.
+      Validate the host against an allowlist before making the request.
+    metadata:
+      category: security
+      cwe: "CWE-918: Server-Side Request Forgery"
+      confidence: MEDIUM
+    pattern-sources:
+      - pattern: $R.URL.Query()
+      - pattern: $R.FormValue(...)
+      - pattern: $R.PostFormValue(...)
+      - pattern: $R.PathValue(...)
+      - pattern: mux.Vars(...)
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: http.Get($U)
+              - pattern: http.Head($U)
+              - pattern: http.Post($U, ...)
+              - pattern: http.PostForm($U, ...)
+              - pattern: http.NewRequest($M, $U, ...)
+              - pattern: http.NewRequestWithContext($C, $M, $U, ...)
+          - focus-metavariable: $U
+
+  - id: go-sql-string-building
+    languages: [go]
+    severity: HIGH
+    message: >-
+      SQL is built with string formatting or concatenation. Pass values as query
+      parameters (`?` / `$1`) instead so the driver escapes them.
+    metadata:
+      category: security
+      cwe: "CWE-89: SQL Injection"
+      confidence: MEDIUM
+    patterns:
+      - pattern-either:
+          - pattern: $DB.$METHOD(fmt.Sprintf(...), ...)
+          - pattern: $DB.$METHOD($CTX, fmt.Sprintf(...), ...)
+          - pattern: $DB.$METHOD("..." + $X, ...)
+          - pattern: $DB.$METHOD($CTX, "..." + $X, ...)
+          - patterns:
+              - pattern-either:
+                  - pattern-inside: |
+                      $Q := fmt.Sprintf(...)
+                      ...
+                  - pattern-inside: |
+                      $Q := "..." + $X
+                      ...
+              - pattern-either:
+                  - pattern: $DB.$METHOD($Q, ...)
+                  - pattern: $DB.$METHOD($CTX, $Q, ...)
+      - metavariable-regex:
+          metavariable: $METHOD
+          regex: ^(Query|QueryRow|Exec|Prepare|QueryContext|QueryRowContext|ExecContext|PrepareContext|Raw)$
+
+  - id: go-tls-insecure-skip-verify
+    languages: [go]
+    severity: HIGH
+    message: >-
+      TLS certificate verification is disabled, so any machine on the network path can
+      impersonate the server. Add the server's CA to RootCAs instead.
+    metadata:
+      category: security
+      cwe: "CWE-295: Improper Certificate Validation"
+      confidence: HIGH
+    pattern-either:
+      - pattern: |
+          tls.Config{..., InsecureSkipVerify: true, ...}
+      - pattern: $C.InsecureSkipVerify = true
+
+  - id: go-weak-hash
+    languages: [go]
+    severity: LOW
+    message: >-
+      MD5 and SHA-1 are broken for collision resistance. They are fine for non-security
+      checksums, but use SHA-256 for anything that protects integrity, and
+      bcrypt/argon2 for passwords.
+    metadata:
+      category: security
+      cwe: "CWE-328: Use of Weak Hash"
+      confidence: LOW
+    pattern-either:
+      - pattern: md5.New()
+      - pattern: md5.Sum(...)
+      - pattern: sha1.New()
+      - pattern: sha1.Sum(...)
+
+  - id: go-http-server-without-timeouts
+    languages: [go]
+    severity: MEDIUM
+    message: >-
+      This HTTP server has no read timeouts, so slow clients can hold connections open
+      forever (Slowloris). Use an http.Server with ReadHeaderTimeout set.
+    metadata:
+      category: security
+      cwe: "CWE-400: Uncontrolled Resource Consumption"
+      confidence: HIGH
+    pattern-either:
+      - pattern: http.ListenAndServe(...)
+      - pattern: http.ListenAndServeTLS(...)
+      - patterns:
+          - pattern: http.Server{...}
+          - pattern-not: |
+              http.Server{..., ReadHeaderTimeout: $T, ...}
+          - pattern-not: |
+              http.Server{..., ReadTimeout: $T, ...}
+
+  - id: go-template-html-cast
+    languages: [go]
+    severity: MEDIUM
+    message: >-
+      Converting a non-constant string to template.HTML turns off html/template's
+      escaping for it. If the value contains user input, this is XSS.
+    metadata:
+      category: security
+      cwe: "CWE-79: Cross-site Scripting"
+      confidence: MEDIUM
+    patterns:
+      - pattern: template.HTML($X)
+      - metavariable-regex:
+          metavariable: $X
+          regex: ^(?!"[^"]*"$|`[^`]*`$)
+
+  - id: go-chmod-world-writable
+    languages: [go]
+    severity: MEDIUM
+    message: >-
+      This makes the file world-writable, so any local user can modify it. Chmod is not
+      reduced by the umask, unlike permissions passed to os.WriteFile or os.MkdirAll.
+    metadata:
+      category: security
+      cwe: "CWE-732: Incorrect Permission Assignment"
+      confidence: HIGH
+    patterns:
+      - pattern-either:
+          - pattern: os.Chmod($F, $PERM)
+          - pattern: $FILE.Chmod($PERM)
+      - metavariable-regex:
+          metavariable: $PERM
+          regex: ^0[oO]?[0-7]?[0-7][0-7][2367]$
+
+  - id: go-archive-path-traversal
+    languages: [go]
+    severity: HIGH
+    message: >-
+      An archive entry name is joined onto the destination directory without validation
+      (Zip Slip). An entry named `../../etc/cron.d/x` escapes the directory. Reject names
+      where filepath.IsLocal returns false before extracting.
+    metadata:
+      category: security
+      cwe: "CWE-22: Path Traversal"
+      confidence: MEDIUM
+    patterns:
+      - pattern-either:
+          - patterns:
+              - pattern-inside: |
+                  for _, $F := range $R.File {
+                    ...
+                  }
+              - pattern: filepath.Join($DIR, $F.Name)
+          - patterns:
+              - pattern-inside: |
+                  $HDR, $ERR := $TR.Next()
+                  ...
+              - pattern: filepath.Join($DIR, $HDR.Name)
+      - pattern-not-inside: |
+          if !filepath.IsLocal($NAME) { ... }
+          ...

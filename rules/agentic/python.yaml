@@ -1,0 +1,258 @@
+# Rules for code that calls LLMs or exposes tools to agents.
+#
+# Threat model: model output is attacker-influenced. Anything the model read (a web page,
+# an issue, a file, a tool result) can carry a prompt injection, so treat completions and
+# tool-call arguments the same way you would treat HTTP request input.
+
+rules:
+  - id: agentic-llm-output-to-code-execution
+    mode: taint
+    languages: [python]
+    severity: CRITICAL
+    message: >-
+      Model output reaches eval/exec or a shell. A prompt injection in anything the model
+      read becomes code execution on this machine. Use a fixed set of tools with
+      validated, typed arguments, or run generated code in an isolated sandbox
+      (container/VM with no credentials or network).
+    metadata:
+      category: security
+      subcategory: agentic
+      cwe: "CWE-94: Code Injection"
+      owasp-llm: "LLM05: Improper Output Handling"
+      confidence: HIGH
+    pattern-sources: &llm-output-sources
+      - pattern: $C.messages.create(...)
+      - pattern: $C.chat.completions.create(...)
+      - pattern: $C.responses.create(...)
+      - pattern: $C.models.generate_content(...)
+      - pattern: litellm.completion(...)
+      - pattern: ollama.chat(...)
+      - pattern: $LLM.invoke(...)
+      - pattern: $LLM.ainvoke(...)
+    pattern-sinks:
+      - pattern: eval(...)
+      - pattern: exec(...)
+      - pattern: os.system(...)
+      - pattern: os.popen(...)
+      - pattern: subprocess.$F(...)
+
+  - id: agentic-llm-output-to-sql
+    mode: taint
+    languages: [python]
+    severity: HIGH
+    message: >-
+      Model output is executed as SQL (text-to-SQL). A prompt injection can make it
+      DROP tables or read other users' rows. Run generated SQL on a read-only
+      connection scoped to the tables the feature needs, or have the model fill
+      parameters of pre-written queries instead.
+    metadata:
+      category: security
+      subcategory: agentic
+      cwe: "CWE-89: SQL Injection"
+      owasp-llm: "LLM05: Improper Output Handling"
+      confidence: MEDIUM
+    pattern-sources: *llm-output-sources
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: $CUR.execute($Q, ...)
+              - pattern: $CUR.executemany($Q, ...)
+              - pattern: $CUR.executescript($Q)
+              - pattern: sqlalchemy.text($Q)
+          - focus-metavariable: $Q
+
+  - id: agentic-tool-input-to-dangerous-sink
+    mode: taint
+    languages: [python]
+    severity: HIGH
+    message: >-
+      An agent tool passes its arguments to a shell, eval, SQL, or the filesystem. The
+      model chooses these arguments, and a prompt injection can make it choose malicious
+      ones. Validate arguments against an allowlist, confine paths to a root directory,
+      or run the tool in a sandbox.
+    metadata:
+      category: security
+      subcategory: agentic
+      cwe: "CWE-78: OS Command Injection"
+      owasp-llm: "LLM06: Excessive Agency"
+      confidence: MEDIUM
+    pattern-sources:
+      - patterns:
+          - pattern-either:
+              - pattern-inside: |
+                  @$SERVER.tool(...)
+                  def $FUNC(..., $PARAM, ...):
+                    ...
+              - pattern-inside: |
+                  @tool
+                  def $FUNC(..., $PARAM, ...):
+                    ...
+              - pattern-inside: |
+                  @tool(...)
+                  def $FUNC(..., $PARAM, ...):
+                    ...
+              - pattern-inside: |
+                  @function_tool
+                  def $FUNC(..., $PARAM, ...):
+                    ...
+              - pattern-inside: |
+                  @function_tool(...)
+                  def $FUNC(..., $PARAM, ...):
+                    ...
+              - pattern-inside: |
+                  @beta_tool
+                  def $FUNC(..., $PARAM, ...):
+                    ...
+          - pattern: $PARAM
+    pattern-sanitizers:
+      - pattern: shlex.quote(...)
+      - pattern: os.path.basename(...)
+    pattern-sinks:
+      - pattern: eval(...)
+      - pattern: exec(...)
+      - pattern: os.system(...)
+      - pattern: os.popen(...)
+      - pattern: subprocess.$F(...)
+      - patterns:
+          - pattern-either:
+              - pattern: open($P, ...)
+              - pattern: os.remove($P)
+              - pattern: shutil.rmtree($P, ...)
+              - pattern: $CUR.execute($P, ...)
+          - focus-metavariable: $P
+
+  - id: agentic-untrusted-input-in-system-prompt
+    mode: taint
+    languages: [python]
+    severity: MEDIUM
+    message: >-
+      Untrusted content (request input or a fetched web page) is placed in the system
+      prompt, where the model treats it as trusted instructions. Put untrusted content in
+      a user message, clearly delimited, and keep the system prompt static.
+    metadata:
+      category: security
+      subcategory: agentic
+      cwe: "CWE-77: Command Injection"
+      owasp-llm: "LLM01: Prompt Injection"
+      confidence: MEDIUM
+    pattern-sources:
+      - pattern: flask.request
+      - pattern: requests.get(...)
+      - pattern: httpx.get(...)
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: $C.messages.create(..., system=$S, ...)
+              - pattern: |
+                  {"role": "system", "content": $S}
+              - pattern: |
+                  {"content": $S, "role": "system"}
+              - pattern: SystemMessage(content=$S, ...)
+              - pattern: SystemMessage($S, ...)
+          - focus-metavariable: $S
+
+  - id: agentic-langchain-dangerous-opt-in
+    languages: [python]
+    severity: HIGH
+    message: >-
+      This explicitly opts in to a LangChain feature that the library marks as dangerous
+      (arbitrary code execution, unrestricted HTTP, or pickle loading). Only enable it
+      inside a sandbox, and only with inputs you control.
+    metadata:
+      category: security
+      subcategory: agentic
+      cwe: "CWE-94: Code Injection"
+      owasp-llm: "LLM06: Excessive Agency"
+      confidence: HIGH
+    pattern-either:
+      - pattern: $F(..., allow_dangerous_code=True, ...)
+      - pattern: $F(..., allow_dangerous_requests=True, ...)
+      - pattern: $F(..., allow_dangerous_deserialization=True, ...)
+
+  - id: agentic-unsandboxed-code-tool
+    languages: [python]
+    severity: HIGH
+    message: >-
+      This gives the agent a Python REPL or shell on the host. One prompt injection is
+      enough to run arbitrary code with this process's credentials. Run the tool in an
+      isolated sandbox, or replace it with narrow, purpose-built tools.
+    metadata:
+      category: security
+      subcategory: agentic
+      cwe: "CWE-94: Code Injection"
+      owasp-llm: "LLM06: Excessive Agency"
+      confidence: HIGH
+    pattern-either:
+      - pattern: PythonREPLTool(...)
+      - pattern: PythonAstREPLTool(...)
+      - pattern: PythonREPL(...)
+      - pattern: ShellTool(...)
+      - pattern: load_tools([..., "terminal", ...], ...)
+
+  - id: agentic-trust-remote-code
+    languages: [python]
+    severity: HIGH
+    message: >-
+      trust_remote_code=True downloads and runs Python from the model repository. Anyone
+      who can push to that repo can run code here. Pin `revision=` to a reviewed commit,
+      or vendor the code.
+    metadata:
+      category: security
+      subcategory: agentic
+      cwe: "CWE-829: Inclusion of Functionality from Untrusted Control Sphere"
+      owasp-llm: "LLM03: Supply Chain"
+      confidence: HIGH
+    pattern: $F(..., trust_remote_code=True, ...)
+
+  - id: agentic-unsafe-model-load
+    languages: [python]
+    severity: HIGH
+    message: >-
+      This loads model weights with pickle, which can execute code embedded in the file.
+      Use torch.load(..., weights_only=True), or the safetensors format.
+    metadata:
+      category: security
+      subcategory: agentic
+      cwe: "CWE-502: Deserialization of Untrusted Data"
+      owasp-llm: "LLM03: Supply Chain"
+      confidence: MEDIUM
+    pattern-either:
+      - patterns:
+          - pattern: torch.load(...)
+          - pattern-not: torch.load(..., weights_only=True, ...)
+      - pattern: joblib.load(...)
+
+  - id: agentic-unbounded-agent-loop
+    languages: [python]
+    severity: LOW
+    message: >-
+      This agent loop has no iteration cap. A confused or prompt-injected model can keep
+      requesting tools indefinitely, burning tokens and repeating side effects. Loop over
+      range(max_turns) instead.
+    metadata:
+      category: reliability
+      subcategory: agentic
+      cwe: "CWE-400: Uncontrolled Resource Consumption"
+      owasp-llm: "LLM10: Unbounded Consumption"
+      confidence: MEDIUM
+    pattern-either:
+      - pattern: |
+          while True:
+            ...
+            <... $C.messages.create(...) ...>
+            ...
+      - pattern: |
+          while True:
+            ...
+            <... $C.chat.completions.create(...) ...>
+            ...
+      - pattern: |
+          while True:
+            ...
+            <... $C.responses.create(...) ...>
+            ...
+      - pattern: |
+          while True:
+            ...
+            <... $LLM.invoke(...) ...>
+            ...

@@ -1,0 +1,107 @@
+# Rules for code that calls LLMs or exposes tools to agents (JavaScript / TypeScript).
+# Same threat model as agentic/python.yaml: model output is attacker-influenced.
+
+rules:
+  - id: agentic-js-llm-output-to-code-execution
+    mode: taint
+    languages: [javascript, typescript]
+    severity: CRITICAL
+    message: >-
+      Model output reaches eval, Function, vm, or child_process. A prompt injection in
+      anything the model read becomes code execution here. Expose narrow tools with
+      validated arguments, or run generated code in an isolated sandbox.
+    metadata:
+      category: security
+      subcategory: agentic
+      cwe: "CWE-94: Code Injection"
+      owasp-llm: "LLM05: Improper Output Handling"
+      confidence: HIGH
+    pattern-sources: &js-llm-output-sources
+      - pattern: $C.messages.create(...)
+      - pattern: $C.chat.completions.create(...)
+      - pattern: $C.responses.create(...)
+      - pattern: generateText(...)
+      - pattern: generateObject(...)
+      - pattern: $LLM.invoke(...)
+    pattern-sinks:
+      - pattern: eval(...)
+      - pattern: new Function(...)
+      - pattern: exec(...)
+      - pattern: execSync(...)
+      - pattern: $CP.execSync(...)
+      - pattern: vm.$F(...)
+
+  - id: agentic-js-llm-output-to-html
+    mode: taint
+    languages: [javascript, typescript]
+    severity: HIGH
+    message: >-
+      Model output is rendered as raw HTML. A prompt injection can make the model emit
+      script, or an <img> tag whose URL exfiltrates the conversation. Render with
+      textContent, or pass rendered markdown through DOMPurify.sanitize(...).
+    metadata:
+      category: security
+      subcategory: agentic
+      cwe: "CWE-79: Cross-site Scripting"
+      owasp-llm: "LLM05: Improper Output Handling"
+      confidence: HIGH
+    pattern-sources: *js-llm-output-sources
+    pattern-sanitizers:
+      - pattern: DOMPurify.sanitize(...)
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: $EL.innerHTML = $HTML
+              - pattern: $EL.outerHTML = $HTML
+              - pattern: document.write($HTML)
+              - pattern: $EL.insertAdjacentHTML($POS, $HTML)
+              - pattern: "{__html: $HTML}"
+          - focus-metavariable: $HTML
+
+  - id: agentic-js-untrusted-input-in-system-prompt
+    mode: taint
+    languages: [javascript, typescript]
+    severity: MEDIUM
+    message: >-
+      Request input is placed in the system prompt, where the model treats it as trusted
+      instructions. Keep the system prompt static and pass untrusted content in a user
+      message, clearly delimited.
+    metadata:
+      category: security
+      subcategory: agentic
+      cwe: "CWE-77: Command Injection"
+      owasp-llm: "LLM01: Prompt Injection"
+      confidence: MEDIUM
+    pattern-sources:
+      - patterns:
+          - pattern: $REQ.$PART
+          - metavariable-regex:
+              metavariable: $REQ
+              regex: ^req(uest)?$
+          - metavariable-regex:
+              metavariable: $PART
+              regex: ^(params|query|body)$
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: |
+                  $C.messages.create({..., system: $S, ...})
+              - pattern: |
+                  {role: "system", content: $S}
+          - focus-metavariable: $S
+
+  - id: agentic-js-browser-api-key-exposure
+    languages: [javascript, typescript]
+    severity: HIGH
+    message: >-
+      dangerouslyAllowBrowser lets the SDK run in the browser, which means the API key
+      ships to every visitor. Call the model from your backend, or mint short-lived
+      per-user credentials.
+    metadata:
+      category: security
+      subcategory: agentic
+      cwe: "CWE-522: Insufficiently Protected Credentials"
+      owasp-llm: "LLM02: Sensitive Information Disclosure"
+      confidence: HIGH
+    pattern: |
+      new $CLIENT({..., dangerouslyAllowBrowser: true, ...})

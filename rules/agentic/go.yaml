@@ -1,0 +1,40 @@
+# Rules for Go code that calls LLMs (anthropic-sdk-go, openai-go).
+# Same threat model as agentic/python.yaml: model output is attacker-influenced.
+
+rules:
+  - id: agentic-go-llm-output-to-dangerous-sink
+    mode: taint
+    languages: [go]
+    severity: CRITICAL
+    message: >-
+      Model output (including tool-call input) reaches exec.Command or a SQL query. A
+      prompt injection in anything the model read can turn into a command or query here.
+      Decode tool input into a typed struct, validate each field against an allowlist,
+      and never pass model text to `sh -c`.
+    metadata:
+      category: security
+      subcategory: agentic
+      cwe: "CWE-78: OS Command Injection"
+      owasp-llm: "LLM05: Improper Output Handling"
+      confidence: HIGH
+    pattern-sources:
+      - pattern: $C.Messages.New(...)
+      - pattern: $C.Chat.Completions.New(...)
+      - pattern: $C.Responses.New(...)
+    pattern-sinks:
+      - pattern: exec.Command(...)
+      - pattern: exec.CommandContext(...)
+      - patterns:
+          - pattern-either:
+              - pattern: $DB.$M($Q, ...)
+              - pattern: $DB.$MCTX($CTX, $Q, ...)
+          - metavariable-regex:
+              metavariable: $M
+              regex: ^(Query|QueryRow|Exec)$
+          - focus-metavariable: $Q
+      - patterns:
+          - pattern: $DB.$MCTX($CTX, $Q, ...)
+          - metavariable-regex:
+              metavariable: $MCTX
+              regex: ^(QueryContext|QueryRowContext|ExecContext)$
+          - focus-metavariable: $Q

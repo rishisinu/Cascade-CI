@@ -1,0 +1,311 @@
+rules:
+  - id: python-shell-injection
+    languages: [python]
+    severity: CRITICAL
+    message: >-
+      A non-constant string is run through a shell. If any part of it comes from user
+      input, an attacker can run arbitrary commands. Pass a list of arguments to
+      subprocess without shell=True instead.
+    metadata:
+      category: security
+      cwe: "CWE-78: OS Command Injection"
+      confidence: MEDIUM
+    patterns:
+      - pattern-either:
+          - patterns:
+              - pattern: subprocess.$F($CMD, ..., shell=True, ...)
+              - metavariable-regex:
+                  metavariable: $F
+                  regex: ^(run|call|check_call|check_output|Popen)$
+          - pattern: os.system($CMD)
+          - pattern: os.popen($CMD, ...)
+          - pattern: subprocess.getoutput($CMD)
+          - pattern: subprocess.getstatusoutput($CMD)
+      - metavariable-regex:
+          metavariable: $CMD
+          regex: ^(?![rbuRBU]{0,2}("[^"]*"|'[^']*')$)
+
+  - id: python-eval-injection
+    languages: [python]
+    severity: CRITICAL
+    message: >-
+      eval/exec runs a non-constant string as Python code. If any part of it comes from
+      user input or a model, this is arbitrary code execution. Use ast.literal_eval for
+      data, or an explicit dispatch table for behaviour.
+    metadata:
+      category: security
+      cwe: "CWE-95: Eval Injection"
+      confidence: MEDIUM
+    patterns:
+      - pattern-either:
+          - pattern: eval($CODE, ...)
+          - pattern: exec($CODE, ...)
+      - metavariable-regex:
+          metavariable: $CODE
+          regex: ^(?![rbuRBU]{0,2}("[^"]*"|'[^']*')$)
+
+  - id: python-insecure-deserialization
+    languages: [python]
+    severity: HIGH
+    message: >-
+      This deserializer can execute arbitrary code while loading. Never use it on data
+      that crossed a trust boundary (uploads, network, caches other services write to).
+      Use JSON or another data-only format.
+    metadata:
+      category: security
+      cwe: "CWE-502: Deserialization of Untrusted Data"
+      confidence: MEDIUM
+    pattern-either:
+      - pattern: pickle.load(...)
+      - pattern: pickle.loads(...)
+      - pattern: cPickle.load(...)
+      - pattern: cPickle.loads(...)
+      - pattern: dill.load(...)
+      - pattern: dill.loads(...)
+      - pattern: marshal.load(...)
+      - pattern: marshal.loads(...)
+      - pattern: shelve.open(...)
+      - pattern: jsonpickle.decode(...)
+
+  - id: python-unsafe-yaml-load
+    languages: [python]
+    severity: HIGH
+    message: >-
+      yaml.load without SafeLoader can construct arbitrary Python objects and run code.
+      Use yaml.safe_load(...) instead.
+    metadata:
+      category: security
+      cwe: "CWE-502: Deserialization of Untrusted Data"
+      confidence: HIGH
+    pattern-either:
+      - pattern: yaml.unsafe_load(...)
+      - patterns:
+          - pattern: yaml.load(...)
+          - pattern-not: yaml.load(..., Loader=yaml.SafeLoader, ...)
+          - pattern-not: yaml.load(..., Loader=yaml.CSafeLoader, ...)
+          - pattern-not: yaml.load(..., Loader=SafeLoader, ...)
+          - pattern-not: yaml.load(..., Loader=CSafeLoader, ...)
+
+  - id: python-sql-injection
+    languages: [python]
+    severity: HIGH
+    message: >-
+      SQL is built with string formatting. Pass values as parameters instead, e.g.
+      cursor.execute("... WHERE id = %s", (user_id,)), so the driver escapes them.
+    metadata:
+      category: security
+      cwe: "CWE-89: SQL Injection"
+      confidence: MEDIUM
+    pattern-either:
+      - patterns:
+          - pattern-either:
+              - pattern: $CUR.$M(f"...", ...)
+              - pattern: $CUR.$M("..." % $ARGS, ...)
+              - pattern: $CUR.$M("...".format(...), ...)
+              - pattern: $CUR.$M("..." + $X, ...)
+              - patterns:
+                  - pattern-either:
+                      - pattern-inside: |
+                          $Q = f"..."
+                          ...
+                      - pattern-inside: |
+                          $Q = "..." % $ARGS
+                          ...
+                      - pattern-inside: |
+                          $Q = "...".format(...)
+                          ...
+                  - pattern: $CUR.$M($Q, ...)
+          - metavariable-regex:
+              metavariable: $M
+              regex: ^(execute|executemany|executescript|raw)$
+      - pattern: sqlalchemy.text(f"...")
+      - pattern: sqlalchemy.text("..." % $ARGS)
+      - pattern: sqlalchemy.text("...".format(...))
+
+  - id: python-tls-verification-disabled
+    languages: [python]
+    severity: HIGH
+    message: >-
+      TLS certificate verification is disabled, so any machine on the network path can
+      impersonate the server. Point `verify` at a CA bundle instead.
+    metadata:
+      category: security
+      cwe: "CWE-295: Improper Certificate Validation"
+      confidence: HIGH
+    pattern-either:
+      - pattern: $HTTP.$M(..., verify=False, ...)
+      - pattern: $SESSION.verify = False
+      - pattern: ssl._create_unverified_context(...)
+      - pattern: $CTX.check_hostname = False
+      - pattern: $CTX.verify_mode = ssl.CERT_NONE
+
+  - id: python-request-without-timeout
+    languages: [python]
+    severity: LOW
+    message: >-
+      requests has no default timeout, so this call can hang forever if the server stops
+      responding. Pass timeout=... explicitly.
+    metadata:
+      category: reliability
+      cwe: "CWE-400: Uncontrolled Resource Consumption"
+      confidence: HIGH
+    patterns:
+      - pattern: requests.$M(...)
+      - metavariable-regex:
+          metavariable: $M
+          regex: ^(get|post|put|patch|delete|head|options|request)$
+      - pattern-not: requests.$M(..., timeout=$T, ...)
+
+  - id: python-weak-hash
+    languages: [python]
+    severity: LOW
+    message: >-
+      MD5 and SHA-1 are broken for collision resistance. If this isn't security-related,
+      pass usedforsecurity=False to say so. Otherwise use SHA-256, or bcrypt/argon2 for
+      passwords.
+    metadata:
+      category: security
+      cwe: "CWE-328: Use of Weak Hash"
+      confidence: LOW
+    patterns:
+      - pattern-either:
+          - pattern: hashlib.md5(...)
+          - pattern: hashlib.sha1(...)
+          - pattern: hashlib.new("md5", ...)
+          - pattern: hashlib.new("sha1", ...)
+      - pattern-not: hashlib.$F(..., usedforsecurity=False, ...)
+
+  - id: python-flask-debug-enabled
+    languages: [python]
+    severity: HIGH
+    message: >-
+      debug=True enables the Werkzeug debugger, which gives anyone who can reach the
+      server an interactive Python shell. Use an environment variable that is off in
+      production.
+    metadata:
+      category: security
+      cwe: "CWE-489: Active Debug Code"
+      confidence: MEDIUM
+    pattern: $APP.run(..., debug=True, ...)
+
+  - id: python-insecure-tempfile
+    languages: [python]
+    severity: MEDIUM
+    message: >-
+      tempfile.mktemp returns a name without creating the file, so another process can
+      create it first (race condition). Use tempfile.mkstemp or NamedTemporaryFile.
+    metadata:
+      category: security
+      cwe: "CWE-377: Insecure Temporary File"
+      confidence: HIGH
+    pattern: tempfile.mktemp(...)
+
+  - id: python-tarfile-extractall
+    languages: [python]
+    severity: MEDIUM
+    message: >-
+      tarfile.extractall without a filter follows `../` paths and links in the archive,
+      letting a malicious tarball write anywhere. Pass filter="data".
+    metadata:
+      category: security
+      cwe: "CWE-22: Path Traversal"
+      confidence: HIGH
+    patterns:
+      - pattern-either:
+          - pattern-inside: |
+              with tarfile.open(...) as $TAR:
+                ...
+          - pattern-inside: |
+              $TAR = tarfile.open(...)
+              ...
+      - pattern: $TAR.extractall(...)
+      - pattern-not: $TAR.extractall(..., filter=$F, ...)
+
+  - id: python-jinja2-autoescape-disabled
+    languages: [python]
+    severity: MEDIUM
+    message: >-
+      Autoescaping is off, so variables rendered into HTML templates are not escaped
+      (XSS). Use autoescape=True or jinja2.select_autoescape().
+    metadata:
+      category: security
+      cwe: "CWE-79: Cross-site Scripting"
+      confidence: HIGH
+    pattern: jinja2.Environment(..., autoescape=False, ...)
+
+  - id: python-request-input-to-command
+    mode: taint
+    languages: [python]
+    severity: CRITICAL
+    message: >-
+      HTTP request input reaches a command or code-execution call. Map the input onto a
+      fixed allowlist instead of passing it through.
+    metadata:
+      category: security
+      cwe: "CWE-78: OS Command Injection"
+      confidence: HIGH
+    pattern-sources:
+      - pattern: flask.request
+      - pattern: $R.GET
+      - pattern: $R.POST
+    pattern-sanitizers:
+      - pattern: shlex.quote(...)
+    pattern-sinks:
+      - pattern: os.system(...)
+      - pattern: os.popen(...)
+      - pattern: subprocess.$F(...)
+      - pattern: eval(...)
+      - pattern: exec(...)
+
+  - id: python-request-input-to-file-path
+    mode: taint
+    languages: [python]
+    severity: HIGH
+    message: >-
+      HTTP request input is used as a file path. `../` sequences let an attacker reach
+      files outside the intended directory. Use werkzeug's secure_filename or
+      os.path.basename, then check the resolved path.
+    metadata:
+      category: security
+      cwe: "CWE-22: Path Traversal"
+      confidence: MEDIUM
+    pattern-sources:
+      - pattern: flask.request
+      - pattern: $R.GET
+      - pattern: $R.POST
+    pattern-sanitizers:
+      - pattern: os.path.basename(...)
+      - pattern: werkzeug.utils.secure_filename(...)
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: open($P, ...)
+              - pattern: os.remove($P)
+              - pattern: os.unlink($P)
+              - pattern: shutil.rmtree($P, ...)
+              - pattern: flask.send_file($P, ...)
+          - focus-metavariable: $P
+
+  - id: python-request-input-to-ssrf
+    mode: taint
+    languages: [python]
+    severity: HIGH
+    message: >-
+      HTTP request input controls the URL of an outbound request (SSRF). An attacker can
+      reach internal services or cloud metadata endpoints. Validate the host against an
+      allowlist first.
+    metadata:
+      category: security
+      cwe: "CWE-918: Server-Side Request Forgery"
+      confidence: MEDIUM
+    pattern-sources:
+      - pattern: flask.request
+      - pattern: $R.GET
+      - pattern: $R.POST
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: requests.$M($U, ...)
+              - pattern: httpx.$M($U, ...)
+              - pattern: urllib.request.urlopen($U, ...)
+          - focus-metavariable: $U

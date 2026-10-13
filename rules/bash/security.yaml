@@ -1,0 +1,52 @@
+rules:
+  - id: bash-curl-pipe-shell
+    languages: [bash]
+    severity: HIGH
+    message: >-
+      A remote script is piped straight into a shell, so whoever controls that URL (or
+      the network path) can run code here. Download it, verify a pinned checksum, then
+      run it.
+    metadata:
+      category: security
+      cwe: "CWE-494: Download of Code Without Integrity Check"
+      confidence: HIGH
+    pattern-regex: \b(curl|wget)\b[^|\n]*\|\s*(sudo\s+(-\S+\s+)*)?(ba|z|da)?sh\b
+
+  - id: bash-tls-verification-disabled
+    languages: [bash]
+    severity: HIGH
+    message: >-
+      TLS verification is disabled for this download, so anyone on the network path can
+      swap the response. Fix the CA bundle (`--cacert`) instead of turning it off.
+    metadata:
+      category: security
+      cwe: "CWE-295: Improper Certificate Validation"
+      confidence: HIGH
+    pattern-either:
+      - pattern-regex: \bcurl\b[^\n]*\s(-[a-zA-Z]*k[a-zA-Z]*|--insecure)\b
+      - pattern-regex: \bwget\b[^\n]*--no-check-certificate
+
+  - id: bash-chmod-world-writable
+    languages: [bash]
+    severity: MEDIUM
+    message: >-
+      This makes the path world-writable, so any local user (or another job on a shared
+      runner) can modify it. Grant write access to the specific user or group instead.
+    metadata:
+      category: security
+      cwe: "CWE-732: Incorrect Permission Assignment"
+      confidence: HIGH
+    pattern-regex: \bchmod\s+(-\w+\s+)*(0?[0-7]?[0-7][0-7][2367]\b|[ugo]*[ao][ugo]*\+[rx]*w)
+
+  - id: bash-eval-variable
+    languages: [bash]
+    severity: MEDIUM
+    message: >-
+      eval re-parses this variable's contents as shell code. If it holds any external
+      input (a branch name, a PR title, an env var set by CI), that input can run
+      commands. Use an array and "${cmd[@]}" instead.
+    metadata:
+      category: security
+      cwe: "CWE-95: Eval Injection"
+      confidence: MEDIUM
+    pattern-regex: \beval\s+["']?\$[A-Za-z_{]

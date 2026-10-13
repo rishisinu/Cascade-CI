@@ -1,0 +1,202 @@
+rules:
+  - id: js-child-process-injection
+    languages: [javascript, typescript]
+    severity: CRITICAL
+    message: >-
+      A non-constant string is run through a shell by child_process. If any part of it
+      comes from user input, an attacker can run arbitrary commands. Use execFile/spawn
+      with an argument array and no `shell: true`.
+    metadata:
+      category: security
+      cwe: "CWE-78: OS Command Injection"
+      confidence: MEDIUM
+    patterns:
+      - pattern-either:
+          # Module object: cp.exec(...)
+          - patterns:
+              - pattern-either:
+                  - pattern-inside: |
+                      $CP = require("child_process")
+                      ...
+                  - pattern-inside: |
+                      import $CP from "child_process"
+                      ...
+                  - pattern-inside: |
+                      import * as $CP from "child_process"
+                      ...
+              - pattern-either:
+                  - pattern: $CP.exec($CMD, ...)
+                  - pattern: $CP.execSync($CMD, ...)
+                  - pattern: |
+                      $CP.$SPAWN($CMD, $ARGS, {..., shell: true, ...})
+          # Destructured: exec(...)
+          - patterns:
+              - pattern-either:
+                  - pattern-inside: |
+                      const {...} = require("child_process")
+                      ...
+                  - pattern-inside: |
+                      import {...} from "child_process"
+                      ...
+              - pattern-either:
+                  - pattern: exec($CMD, ...)
+                  - pattern: execSync($CMD, ...)
+                  - pattern: |
+                      $SPAWN($CMD, $ARGS, {..., shell: true, ...})
+      - metavariable-regex:
+          metavariable: $CMD
+          regex: ^(?!"[^"]*"$|'[^']*'$|`[^`$]*`$)
+
+  - id: js-eval-injection
+    languages: [javascript, typescript]
+    severity: CRITICAL
+    message: >-
+      A non-constant string is evaluated as code. If any part of it comes from user input
+      or a model, this is arbitrary code execution. Note that Node's `vm` module is not a
+      security sandbox.
+    metadata:
+      category: security
+      cwe: "CWE-95: Eval Injection"
+      confidence: MEDIUM
+    patterns:
+      - pattern-either:
+          - pattern: eval($CODE)
+          - pattern: new Function(..., $CODE)
+          - pattern: Function(..., $CODE)
+          - pattern: new vm.Script($CODE, ...)
+          - patterns:
+              - pattern: vm.$F($CODE, ...)
+              - metavariable-regex:
+                  metavariable: $F
+                  regex: ^(runInContext|runInNewContext|runInThisContext|compileFunction)$
+      - metavariable-regex:
+          metavariable: $CODE
+          regex: ^(?!"[^"]*"$|'[^']*'$|`[^`$]*`$)
+
+  - id: js-dom-xss
+    languages: [javascript, typescript]
+    severity: HIGH
+    message: >-
+      A non-constant string is written into the DOM as HTML. If it contains user input,
+      this is XSS. Use textContent, or sanitize with DOMPurify.sanitize(...) first.
+    metadata:
+      category: security
+      cwe: "CWE-79: Cross-site Scripting"
+      confidence: MEDIUM
+    patterns:
+      - pattern-either:
+          - pattern: $EL.innerHTML = $HTML
+          - pattern: $EL.outerHTML = $HTML
+          - pattern: document.write($HTML)
+          - pattern: document.writeln($HTML)
+          - pattern: $EL.insertAdjacentHTML($POS, $HTML)
+      - metavariable-regex:
+          metavariable: $HTML
+          regex: ^(?!"[^"]*"$|'[^']*'$|`[^`$]*`$|DOMPurify\.sanitize\()
+
+  - id: js-react-dangerously-set-inner-html
+    languages: [javascript, typescript]
+    severity: MEDIUM
+    message: >-
+      dangerouslySetInnerHTML renders this value as raw HTML. If it contains user or
+      model output, this is XSS. Sanitize it with DOMPurify.sanitize(...) first.
+    metadata:
+      category: security
+      cwe: "CWE-79: Cross-site Scripting"
+      confidence: MEDIUM
+    patterns:
+      - pattern: "{__html: $HTML}"
+      - metavariable-regex:
+          metavariable: $HTML
+          regex: ^(?!"[^"]*"$|'[^']*'$|`[^`$]*`$|DOMPurify\.sanitize\()
+
+  - id: js-tls-verification-disabled
+    languages: [javascript, typescript]
+    severity: HIGH
+    message: >-
+      TLS certificate verification is disabled, so any machine on the network path can
+      impersonate the server. Pass the server's CA via the `ca` option instead.
+    metadata:
+      category: security
+      cwe: "CWE-295: Improper Certificate Validation"
+      confidence: HIGH
+    pattern-either:
+      - pattern: |
+          {..., rejectUnauthorized: false, ...}
+      - patterns:
+          - pattern: process.env.NODE_TLS_REJECT_UNAUTHORIZED = $V
+          - metavariable-regex:
+              metavariable: $V
+              regex: ^["'`]?0["'`]?$
+
+  - id: js-sql-injection
+    languages: [javascript, typescript]
+    severity: HIGH
+    message: >-
+      SQL is built with string interpolation. Use placeholders ($1 / ?) with a values
+      array, or a tagged template like Prisma's $queryRaw`...` that parameterizes for you.
+    metadata:
+      category: security
+      cwe: "CWE-89: SQL Injection"
+      confidence: MEDIUM
+    patterns:
+      - pattern-either:
+          - pattern: $DB.$M(`...${...}...`, ...)
+          - pattern: $DB.$M("..." + $X, ...)
+      - metavariable-regex:
+          metavariable: $M
+          regex: ^(query|execute|raw|\$queryRawUnsafe|\$executeRawUnsafe|unsafe)$
+
+  - id: js-express-path-traversal
+    mode: taint
+    languages: [javascript, typescript]
+    severity: HIGH
+    message: >-
+      Request input is used as a file path. `../` sequences let an attacker read files
+      outside the intended directory. Use path.basename, or res.sendFile(name, { root })
+      which refuses to leave root.
+    metadata:
+      category: security
+      cwe: "CWE-22: Path Traversal"
+      confidence: MEDIUM
+    pattern-sources:
+      - patterns:
+          - pattern: $REQ.$PART
+          - metavariable-regex:
+              metavariable: $REQ
+              regex: ^req(uest)?$
+          - metavariable-regex:
+              metavariable: $PART
+              regex: ^(params|query|body)$
+    pattern-sanitizers:
+      - pattern: path.basename(...)
+    pattern-sinks:
+      - patterns:
+          - pattern-either:
+              - pattern: $RES.sendFile($P)
+              - pattern: $RES.download($P, ...)
+              - patterns:
+                  - pattern: $FS.$F($P, ...)
+                  - metavariable-regex:
+                      metavariable: $FS
+                      regex: ^(fs|fsp|fsPromises)$
+                  - metavariable-regex:
+                      metavariable: $F
+                      regex: ^(readFile|readFileSync|createReadStream|writeFile|writeFileSync|createWriteStream|unlink|unlinkSync|rm|rmSync)$
+          - focus-metavariable: $P
+
+  - id: js-weak-hash
+    languages: [javascript, typescript]
+    severity: LOW
+    message: >-
+      MD5 and SHA-1 are broken for collision resistance. They are fine for non-security
+      checksums, but use SHA-256 for integrity and bcrypt/argon2/scrypt for passwords.
+    metadata:
+      category: security
+      cwe: "CWE-328: Use of Weak Hash"
+      confidence: LOW
+    patterns:
+      - pattern: $CRYPTO.createHash($ALG)
+      - metavariable-regex:
+          metavariable: $ALG
+          regex: ^["'](md5|sha1)["']$
