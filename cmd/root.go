@@ -4,7 +4,6 @@ Copyright © 2026 NAME HERE <EMAIL ADDRESS>
 package cmd
 
 import (
-	"fmt"
 	"os"
 
 	"github.com/spf13/cobra"
@@ -22,21 +21,29 @@ var tier0Opts tier0Options
 // rootCmd represents the base command when called without any subcommands
 var rootCmd = &cobra.Command{
 	Use:   "cascade",
-	Short: "A brief description of your application",
-	Long: `A longer description that spans multiple lines and likely contains
-examples and usage of using your application. For example:
+	Short: "Security checks for pull requests, run in tiers from fast to deep",
+	Long: `Cascade runs security checks against a pull request and reports the findings
+as JSON. A run fails (exit code 1) if anything is found, so it can gate CI.
 
+Tier 0 (implemented): fast checks that run on every PR
+  gitleaks   secrets committed in the PR's commits
+  semgrep    static analysis on the files the PR changed, using Cascade's
+             built-in rulesets: Go, Python, JavaScript/TypeScript, Bash,
+             Dockerfile, GitHub Actions workflows, and agentic/LLM code
+             (Rust files use the Semgrep registry's p/rust, which needs network)
 
-Cobra is a CLI library for Go that empowers applications.
-This application is a tool to generate the needed files
-to quickly create a Cobra application.`,
+Planned: ELF binary hygiene checks (--binary), and a "doctor" command that
+checks the required tools are installed.
+
+Requires git, gitleaks and semgrep on PATH.
+
+Example:
+  cascade tier0 run --repo . --base origin/main`,
 	Version: "1.0-dev",
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Println("base root command, use --help to see flags!")
+		// Running bare `cascade` prints the overview above instead of doing nothing
+		cmd.Help()
 	},
-	// Uncomment the following line if your bare application
-	// has an action associated with it:
-	// Run: func(cmd *cobra.Command, args []string) { },
 }
 
 // Execute adds all child commands to the root command and sets flags appropriately.
@@ -63,5 +70,5 @@ func init() {
 
 	tier0RunCmd.Flags().StringVar(&tier0Opts.repoPath, "repo", ".", "path to the repository to scan")
 	tier0RunCmd.Flags().StringVar(&tier0Opts.baseRef, "base", "origin/main", "git ref to diff against, scoping the scan to the PR")
-	tier0RunCmd.Flags().StringVar(&tier0Opts.binaryPath, "binary", "", "path to the ELF binary built from this PR")
+	tier0RunCmd.Flags().StringVar(&tier0Opts.binaryPath, "binary", "", "path to the ELF binary built from this PR (accepted, but ELF checks are not implemented yet)")
 }
