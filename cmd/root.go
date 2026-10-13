@@ -31,9 +31,11 @@ Tier 0 (implemented): fast checks that run on every PR
              built-in rulesets: Go, Python, JavaScript/TypeScript, Bash,
              Dockerfile, GitHub Actions workflows, and agentic/LLM code
              (Rust files use the Semgrep registry's p/rust, which needs network)
+  elf        exploit-mitigation checks on the Linux binary the PR builds
+             (--binary): PIE, non-executable stack, RELRO, stack canaries,
+             RPATH. Non-ELF files (Windows/macOS builds) are skipped.
 
-Planned: ELF binary hygiene checks (--binary), and a "doctor" command that
-checks the required tools are installed.
+Planned: a "doctor" command that checks the required tools are installed.
 
 Requires git, gitleaks and semgrep on PATH.
 
@@ -70,5 +72,5 @@ func init() {
 
 	tier0RunCmd.Flags().StringVar(&tier0Opts.repoPath, "repo", ".", "path to the repository to scan")
 	tier0RunCmd.Flags().StringVar(&tier0Opts.baseRef, "base", "origin/main", "git ref to diff against, scoping the scan to the PR")
-	tier0RunCmd.Flags().StringVar(&tier0Opts.binaryPath, "binary", "", "path to the ELF binary built from this PR (accepted, but ELF checks are not implemented yet)")
+	tier0RunCmd.Flags().StringVar(&tier0Opts.binaryPath, "binary", "", "path to the Linux (ELF) binary built from this PR; enables the ELF hardening checks")
 }
