@@ -63,7 +63,7 @@ func GitLeaks(repo string, base string) ([]report.Finding, error) {
 	for _, g := range completed {
 		findings = append(findings, report.Finding{
 			ID:         g.Fingerprint,
-			Tier:       "0",
+			Tier:       0,
 			SourceTool: report.ToolGitleaks,
 			Severity:   report.SeverityHigh,
 			Category:   g.RuleID,

@@ -13,12 +13,12 @@ import (
 	"github.com/rishisinu/Cascade-CI/internal/report"
 )
 
-// ELFHygiene inspects a compiled Linux binary for missing exploit mitigations: PIE,
+// ELFHygiene looks at a compiled Linux binary for missing exploit mitigations: PIE,
 // a non-executable stack, RELRO, stack canaries, and unsafe library search paths.
 // Every finding fails the run, so each check only fires where the fix is reasonable
 // for the language the binary was built from.
 func ELFHygiene(binary string) ([]report.Finding, error) {
-	f, err := elf.Open(binary)
+	f, err := elf.Open(binary) // Opens the binary
 	if err != nil {
 		var formatErr *elf.FormatError
 		if errors.As(err, &formatErr) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
@@ -29,14 +29,14 @@ func ELFHygiene(binary string) ([]report.Finding, error) {
 		}
 		return nil, fmt.Errorf("opening binary: %w", err)
 	}
-	defer f.Close()
+	defer f.Close() //Close bin after this func runs
 
-	lang := binaryLanguage(f)
+	lang := binaryLanguage(f) //Guesses toolchain that built binary, so we only apply checks that make sense for it.
 	var findings []report.Finding
 	add := func(rule string, severity report.Severity, message string) {
 		findings = append(findings, report.Finding{
 			ID:         rule + ":" + binary,
-			Tier:       "0",
+			Tier:       0,
 			SourceTool: report.ToolElfHygiene,
 			Severity:   severity,
 			Category:   rule,
@@ -44,14 +44,21 @@ func ELFHygiene(binary string) ([]report.Finding, error) {
 			RawMessage: message,
 		})
 	}
-
-	// PIE: ET_DYN means the code can be loaded at a random address (ASLR).
+	//Some binary checks lowk chat wrote this but ill try my best to descrive what they do
+	// PIE: ET_DYN means the code can be loaded at a random address (ASLR). Basically PIE is a security feature that makes it
+	// harder for attackers to predict where code is loaded in memory,
+	// which can help prevent certain types of attacks.
+	// If the binary is not PIE, it means that the code is loaded at a
+	// fixed address, which can make it easier for attackers to exploit vulnerabilities.
 	if f.Type != elf.ET_DYN {
 		add("elf-not-pie", report.SeverityHigh, pieMessage(lang))
 	}
 
 	// NX: the GNU_STACK header must exist and must not be executable. With no header,
-	// the kernel falls back to an executable stack for compatibility.
+	// the kernel falls back to a default executable stack for compatibility.
+	//Basicaly we ensure the stack is not executable, so a malicoius attacker cant just append/add code to the stack and run it.
+	//  If the stack is executable, it means that an attacker could potentially
+	// inject and execute malicious code on the stack, which is a security risk.
 	stack := progHeader(f, elf.PT_GNU_STACK)
 	if stack == nil || stack.Flags&elf.PF_X != 0 {
 		add("elf-executable-stack", report.SeverityHigh,

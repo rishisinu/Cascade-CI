@@ -58,16 +58,16 @@ type semgrepResult struct {
 }
 
 func Semgrep(repo string, base string) ([]report.Finding, error) {
-	files, err := changedFiles(repo, base)
+	files, err := changedFiles(repo, base) // Calls changed files passing in base to extract all files
 	if err != nil {
 		return nil, err
 	}
-	configs := configsFor(files)
+	configs := configsFor(files) // Pass in all files to configsFor to get the configs for the files in the diff
 	if len(configs) == 0 {
 		return nil, nil // Nothing in this diff that we have rules for
 	}
 
-	rulesDir, err := extractRules()
+	rulesDir, err := extractRules() //Creates temp dir and extracts the rules from the embedded rules dir into that temp dir
 	if err != nil {
 		return nil, err
 	}
@@ -76,7 +76,8 @@ func Semgrep(repo string, base string) ([]report.Finding, error) {
 	args := []string{"scan", "--json", "--metrics=off", "--disable-version-check"}
 	if base != "" {
 		// Only report findings this PR introduced, not ones already on base.
-		// Resolve to a SHA first, since semgrep wants a commit rather than a ref name.
+		//Turn whatever base was passed into a commit sha using rev-parse, and pass that to semgrep as the baseline commit. This will make semgrep only report findings that are new in this PR,
+		// not ones that were already present in base.
 		sha, err := exec.Command("git", "-C", repo, "rev-parse", "--verify", base+"^{commit}").Output()
 		if err != nil {
 			return nil, fmt.Errorf("base ref %q not found in %s (shallow clone?): %w", base, repo, err)
@@ -104,14 +105,14 @@ func Semgrep(repo string, base string) ([]report.Finding, error) {
 	if err := json.Unmarshal(output, &completed); err != nil {
 		return nil, fmt.Errorf("parsing semgrep output: %w", err)
 	}
-
+	// Process the semgrep results and convert them to our report.Finding
 	findings := make([]report.Finding, 0, len(completed.Results))
 	for _, s := range completed.Results {
 		// check_id comes back prefixed with the config's path, e.g. "tmp.go.go-weak-hash"
 		ruleID := s.CheckID[strings.LastIndex(s.CheckID, ".")+1:]
 		findings = append(findings, report.Finding{
 			ID:         fmt.Sprintf("%s:%s:%d", ruleID, filepath.ToSlash(s.Path), s.Start.Line),
-			Tier:       "0",
+			Tier:       0,
 			SourceTool: report.ToolSemgrep,
 			Severity:   semgrepSeverity(s.Extra.Severity),
 			Category:   ruleID,
@@ -140,7 +141,7 @@ func changedFiles(repo string, base string) ([]string, error) {
 	return strings.FieldsFunc(string(out), func(r rune) bool { return r == 0 }), nil
 }
 
-// configsFor maps changed files onto the semgrep configs to run, without duplicates.
+// configsFor basically determines which semgrep configs to run, without duplicates by looping thru all files in the diff
 func configsFor(files []string) []string {
 	seen := map[string]bool{}
 	var configs []string
@@ -161,12 +162,14 @@ func fileKind(file string) string {
 	file = filepath.ToSlash(file)
 	name := strings.ToLower(path.Base(file))
 	ext := path.Ext(name)
+	// Here we basically have a special checl to see if the file is a workflow file or a dockerfile, otherwise we just return the extension
 	switch {
 	case strings.HasPrefix(file, ".github/workflows/") && (ext == ".yml" || ext == ".yaml"):
 		return "github-actions"
 	case name == "dockerfile" || strings.HasPrefix(name, "dockerfile.") || ext == ".dockerfile":
 		return "dockerfile"
 	}
+	//append onto extKinds map to return the kind of file based on the extension, if it is not found it will return an empty string
 	return extKinds[ext]
 }
 
@@ -198,8 +201,7 @@ func extractRules() (string, error) {
 	return dir, nil
 }
 
-// semgrepSeverity maps semgrep's levels onto ours. Our own rules use CRITICAL..LOW;
-// registry rules mostly still use the older ERROR/WARNING/INFO.
+// semgrepSeverity maps semgrep's levels onto ours. and we return the severity obj depending on what is returned
 func semgrepSeverity(s string) report.Severity {
 	switch strings.ToUpper(s) {
 	case "CRITICAL":
