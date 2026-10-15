@@ -24,7 +24,7 @@ type Location struct {
 
 type Finding struct {
 	ID         string     `json:"id"`
-	Tier       string     `json:"tier"`
+	Tier       int        `json:"tier"`
 	SourceTool SourceTool `json:"source_tool"`
 	Severity   Severity   `json:"severity"`
 	Category   string     `json:"category"`

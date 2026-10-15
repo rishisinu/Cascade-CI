@@ -4,6 +4,7 @@ Copyright © 2026 NAME HERE <EMAIL ADDRESS>
 package cmd
 
 import (
+	"errors"
 	"os"
 
 	"github.com/spf13/cobra"
@@ -14,6 +15,7 @@ type tier0Options struct {
 	repoPath   string
 	baseRef    string
 	binaryPath string
+	outputPath string
 }
 
 var tier0Opts tier0Options
@@ -23,7 +25,8 @@ var rootCmd = &cobra.Command{
 	Use:   "cascade",
 	Short: "Security checks for pull requests, run in tiers from fast to deep",
 	Long: `Cascade runs security checks against a pull request and reports the findings
-as JSON. A run fails (exit code 1) if anything is found, so it can gate CI.
+as JSON. The exit code lets it gate CI: 0 when nothing is found, 1 when there
+are findings, and 2 when a check couldn't run (missing tool, bad ref, bad flags).
 
 Tier 0 (implemented): fast checks that run on every PR
   gitleaks   secrets committed in the PR's commits
@@ -48,12 +51,32 @@ Example:
 	},
 }
 
+// Exit codes, so CI can tell "you have a vulnerability" apart from "the scan broke".
+const (
+	exitClean    = 0
+	exitFindings = 1
+	exitError    = 2
+)
+
+// codeError is an error that also sets the process exit code.
+type codeError struct {
+	code int
+	err  error
+}
+
+func (e *codeError) Error() string { return e.err.Error() }
+func (e *codeError) Unwrap() error { return e.err }
+
 // Execute adds all child commands to the root command and sets flags appropriately.
 // This is called by main.main(). It only needs to happen once to the rootCmd.
 func Execute() {
 	err := rootCmd.Execute()
 	if err != nil {
-		os.Exit(1)
+		var ce *codeError
+		if errors.As(err, &ce) {
+			os.Exit(ce.code)
+		}
+		os.Exit(exitError) // anything else is a usage problem, e.g. an unknown flag
 	}
 }
 
@@ -73,4 +96,6 @@ func init() {
 	tier0RunCmd.Flags().StringVar(&tier0Opts.repoPath, "repo", ".", "path to the repository to scan")
 	tier0RunCmd.Flags().StringVar(&tier0Opts.baseRef, "base", "origin/main", "git ref to diff against, scoping the scan to the PR")
 	tier0RunCmd.Flags().StringVar(&tier0Opts.binaryPath, "binary", "", "path to the Linux (ELF) binary built from this PR; enables the ELF hardening checks")
+	tier0RunCmd.Flags().StringVar(&tier0Opts.outputPath, "output", "", "path to the output file to write the JSON report to")
+
 }

@@ -3,6 +3,7 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 
 	"github.com/rishisinu/Cascade-CI/internal/tier0"
 	"github.com/spf13/cobra"
@@ -53,25 +54,45 @@ ELF checks (only with --binary; Windows/macOS builds are skipped):
   elf-relative-rpath     shared libraries can load from the working directory
   RELRO and canary checks don't apply to Go; canaries don't apply to Rust.
 
-Exit code is 0 when nothing is found and 1 when there are findings or a check fails.`,
+The report is always printed to stdout, and also written to --output if set.
+If a check fails to run, the report is still written with status "error" and
+whatever the earlier checks found.
+
+Exit codes:
+  0  nothing found
+  1  findings
+  2  a check couldn't run (missing tool, bad ref, unreadable binary)`,
 	Example: `  cascade tier0 run
   cascade tier0 run --repo ../my-service --base origin/main
   cascade tier0 run --binary ./bin/server
+  cascade tier0 run --output cascade-report.json
   cascade tier0 run --base ""   # scan the whole repository`,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		run, err := tier0.Run(tier0Opts.repoPath, tier0Opts.baseRef, tier0Opts.binaryPath)
-		if err != nil {
-			return err
-		}
+		// Flags parsed fine by this point, so a failed scan shouldn't dump the usage text
+		cmd.SilenceUsage = true
+
+		run, runErr := tier0.Run(tier0Opts.repoPath, tier0Opts.baseRef, tier0Opts.binaryPath)
+
+		// Write the report before acting on runErr, so a run that errored partway still
+		// leaves a report (status "error") with the findings from the checks that finished.
 		//Essentially takes the return struct and turns it into pretty json, first "" is prefix for each line and the " " is indent for every level
 		out, err := json.MarshalIndent(run, "", "  ")
 		if err != nil {
-			return err
+			return &codeError{exitError, err}
 		}
 		fmt.Println(string(out))
+		if tier0Opts.outputPath != "" {
+			if err := os.WriteFile(tier0Opts.outputPath, append(out, '\n'), 0o644); err != nil {
+				return &codeError{exitError, fmt.Errorf("writing report: %w", err)}
+			}
+		}
+
+		if runErr != nil {
+			return &codeError{exitError, runErr}
+		}
 		//If anythying is found ...
 		if len(run.Findings) > 0 {
-			return fmt.Errorf("tier0 failed with %d finding's'", len(run.Findings))
+			return &codeError{exitFindings, fmt.Errorf("tier0 run found %d finding(s)", len(run.Findings))}
 		}
 		return nil
 	},
