@@ -257,7 +257,19 @@ How to ship them:
 
 ---
 
-## 9. Seeding Tier 1 from Tier 0 (under discussion)
+## 9. Seeding Tier 1 from Tier 0
+
+### Decision (final)
+**No saved runs, no hash, no cache.** Tier 1's first step is a full-scope Tier 0 pass, run in-process: `tier0.Run(repo, "", binary)`.
+- Tier 0 is cheap and deterministic. Tier 1 is weekly and the code has changed since any PR run, so the checks would need to be recomputed anyway.
+- `--output` stays on both commands so users can read the findings (and upload them as artifacts). Nothing reads those files back.
+- No GitHub-specific code, no `GITHUB_TOKEN` / `actions: read`, and local runs work the same way.
+- How the full-scope results are used:
+  - **semgrep** findings are the main seeds for the agent's triage loop.
+  - **gitleaks** and **ELF** findings go straight into the Tier 1 report. The agent has little to investigate in a leaked secret or a missing linker flag.
+- Watch out: with `--base ""`, gitleaks scans the whole git history. Secrets that were committed and later removed show up, which is still valid (they're in the history) but noisy. Consider gitleaks `dir` mode for Tier 1, or make full history configurable.
+
+### Options considered and rejected
 
 ### Problems found with the original "artifact named by SHA" idea
 1. Tier 0 runs on PRs, while Tier 1 runs on `main` HEAD, so no Tier 0 run happened at that commit.
@@ -265,24 +277,25 @@ How to ship them:
 3. PR runs are diff-scoped (changed files, new findings only), so they don't describe the whole repo.
 4. Artifacts expire (90 days by default).
 
-### Earlier suggestion
-Tier 1 runs `tier0.Run(repo, "", binary)` in-process as its first step, with an optional `--seeds report.json` flag. (The full-history gitleaks scan may be slow and noisy, so consider gitleaks `dir` mode for Tier 1.)
 
-### Current proposal (from Rishi)
-- Tier 0 gets an optional flag (working name `--save_path`). When it's set, the Tier 0 run is saved with a hash in the filename.
-- By default, Tier 1 looks for a saved run matching that hash. If one exists, it reuses those findings as seeds. If not, it runs Tier 0 itself and seeds from that.
+### Saved runs keyed by hash (rejected)
+- Proposal: an optional save flag on Tier 0 writes the run with a hash in the filename, and Tier 1 reuses a matching run or falls back to running Tier 0 itself.
+- Why rejected:
+  - The key would need tree hash + scope + binary hash + versions.
+  - Only full-scope runs could be reused, so PR runs never qualify.
+  - CI runners are wiped between jobs, so it would need `actions/cache` plus an extra `push: main` Tier 0 job, because PR-branch caches can't be read from `main`.
+  - All of that to save a few seconds or minutes per weekly run.
 
 ---
 
 ## 10. Open decisions
-- [ ] Seeding approach details (section 9): cache key, flag names, how it persists in CI
 - [ ] LLM provider to implement first
 - [ ] First language for Tier 1 analyzers (C/C++ fits the `-g` focus; Go has the strongest existing rulesets)
 - [ ] Format of the config file in `configs/` (severity threshold, enabled checks)
 
 ## Suggested build order
 1. `--output` on `tier0 run`, plus filling in `CommitSHA` / `ToolVersions` (small)
-2. Saving and looking up Tier 0 runs (section 9)
+2. `tier1 run` skeleton that calls `tier0.Run(repo, "", binary)` as its first step (section 9)
 3. The `Tool` registry and repo-scoped file tools
 4. Provider interface and agent loop
 5. `report_finding` validation and the Tier 1 report fields
