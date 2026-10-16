@@ -5,10 +5,11 @@ import (
 	"github.com/rishisinu/Cascade-CI/internal/report"
 )
 
+// Run executes the tier 0 security checks.
 func Run(repo string, base string, binary string) (report.Run, error) {
 	run := report.Run{Tier: 0, Status: report.RunPass}
 
-	f, err := checks.GitLeaks(repo, base)
+	f, err := checks.Semgrep(repo, base)
 
 	if err != nil {
 		run.Status = report.RunError
@@ -17,7 +18,7 @@ func Run(repo string, base string, binary string) (report.Run, error) {
 
 	run.Findings = append(run.Findings, f...) // Append takes an arr and what items to add to that arr, so we expand out the obk
 
-	f, err = checks.Semgrep(repo, base)
+	f, err = checks.GitLeaks(repo, base)
 
 	if err != nil {
 		run.Status = report.RunError
