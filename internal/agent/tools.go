@@ -89,3 +89,20 @@ func (t readFile) Run(_ context.Context, input json.RawMessage) (string, error){
     return b.String(), nil
 
 }
+
+
+
+type grep struct{repo string}
+
+func (grep) Spec() Spec {
+	return Spec{
+		Name: "grep"
+		Description: "allows you to search for a certain pattern/regex in a file. Returns file:line: text " +
+																													"this works for up to 100 matches, so you can use to find function callers etc",
+	    Properties: map[string]any{
+						"pattern": map[string]any{"type":"string"}
+						"path": map[string]any{"type":"string", Description: "Directory to search, relative to the repo root. Default: whole repo"}
+					},
+		Required: []string{"pattern"},
+	}
+}
