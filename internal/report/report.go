@@ -30,6 +30,11 @@ type Finding struct {
 	Category   string     `json:"category"`
 	RawMessage any        `json:"raw_message"`
 	Location   Location   `json:"location"`
+	//Tier 1 Findings
+	Verdict     string      `json:"verdict,omitempty"`
+	Confidence  string      `json:"confidence,omitempty"`
+	Trace       []TraceStep `json:"trace,omitempty"`
+	Remediation string      `json:"remediation,omitempty"`
 }
 
 type RunStatus string
@@ -46,4 +51,17 @@ type Run struct {
 	Status       RunStatus         `json:"status"`
 	ToolVersions map[string]string `json:"tool_versions"`
 	Findings     []Finding         `json:"findings"`
+}
+
+const (
+	ToolGitLeaks SourceTool = "gitleaks"
+	ToolSemgrep  SourceTool = "semgrep"
+	ToolElf      SourceTool = "elf"
+	ToolGosec    SourceTool = "gosec"
+)
+
+type TraceStep struct {
+	File string `json:"file"`
+	Line int    `json:"line"`
+	Note string `json:"note"`
 }
